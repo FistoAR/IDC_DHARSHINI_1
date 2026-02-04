@@ -24,9 +24,14 @@ import {
   Search,
   Maximize2,
   Check,
+  RotateCcw,
+  Minus,
+  MoreVertical,
 } from 'lucide-react';
 import InteractionPanel from './InteractionPanel';
 import AnimationPanel from './AnimationPanel';
+import SlideshowProperties from './SlideshowProperties';
+import { Icon } from '@iconify/react';
 
 
 const ImageCropOverlay = ({ imageSrc, onSave, onCancel, element }) => {
@@ -72,6 +77,23 @@ const ImageCropOverlay = ({ imageSrc, onSave, onCancel, element }) => {
   const handleImageLoad = (e) => {
     const { naturalWidth, naturalHeight } = e.target;
     setNaturalSize({ width: naturalWidth, height: naturalHeight });
+    
+    // Check if there's already a saved crop from styles
+    const cp = element?.style.clipPath || element?.style.webkitClipPath || '';
+    if (!cp.includes('inset')) {
+      // Set default 213x213 crop
+      // We calculate percentage based on natural dimension
+      const wPercent = Math.min(90, (250 / naturalWidth) * 100);
+      const hPercent = Math.min(90, (250 / naturalHeight) * 100);
+      
+      setCrop({
+        top: (100 - hPercent) / 2,
+        left: (100 - wPercent) / 2,
+        width: wPercent,
+        height: hPercent
+      });
+    }
+
     updateDisplaySize();
   };
 
@@ -85,26 +107,103 @@ const ImageCropOverlay = ({ imageSrc, onSave, onCancel, element }) => {
     if (!isDragging || !displaySize.width) return;
     const dx = ((e.clientX - startPos.x) / displaySize.width) * 100;
     const dy = ((e.clientY - startPos.y) / displaySize.height) * 100;
+    
+    // Image aspect ratio (Width / Height)
+    const imgAspect = displaySize.width / displaySize.height;  
 
     setCrop(prev => {
       let next = { ...prev };
+      const MIN_SIZE = 5;
+
       if (dragType === 'move') {
         next.left = Math.max(0, Math.min(100 - prev.width, startPos.crop.left + dx));
         next.top = Math.max(0, Math.min(100 - prev.height, startPos.crop.top + dy));
       } else {
-        const MIN_SIZE = 5;
-        if (dragType.includes('t')) {
-            const newTop = Math.max(0, Math.min(startPos.crop.top + startPos.crop.height - MIN_SIZE, startPos.crop.top + dy));
-            next.height = startPos.crop.height + (startPos.crop.top - newTop);
-            next.top = newTop;
-        }
-        if (dragType.includes('b')) next.height = Math.max(MIN_SIZE, Math.min(100 - prev.top, startPos.crop.height + dy));
-        if (dragType.includes('l')) {
-            const newLeft = Math.max(0, Math.min(startPos.crop.left + startPos.crop.width - MIN_SIZE, startPos.crop.left + dx));
-            next.width = startPos.crop.width + (startPos.crop.left - newLeft);
-            next.left = newLeft;
-        }
-        if (dragType.includes('r')) next.width = Math.max(MIN_SIZE, Math.min(100 - prev.left, startPos.crop.width + dx));
+         // Lock aspect ratio to 1:1 (Square)
+         // height% = width% * imgAspect
+         
+         // Determine new width based on drag direction
+         let newW = startPos.crop.width;
+         let newH = startPos.crop.height;
+  
+         if (dragType === 'br') {
+            // Dragging Bottom-Right
+            // We use the larger of dx/dy relative projection or just dx for simplicity + constraint
+            // Let's drive by dx (width change) for smooth feel, or max(dx, dy converted)
+            // Simple approach: Use dx to drive width, derive height.
+            
+            newW = Math.max(MIN_SIZE, Math.min(100 - startPos.crop.left, startPos.crop.width + dx));
+            newH = newW * imgAspect;
+            
+            // If height goes out of bounds, scale back width
+            if (startPos.crop.top + newH > 100) {
+                newH = 100 - startPos.crop.top;
+                newW = newH / imgAspect;
+            }
+            next.width = newW;
+            next.height = newH;
+         } 
+         else if (dragType === 'bl') {
+             // Dragging Bottom-Left: Modifies left and width. Anchor Right.
+             // newWidth = startWidth - dx
+             // Clamp left
+             let proposedLeft = Math.max(0, Math.min(startPos.crop.left + startPos.crop.width - MIN_SIZE, startPos.crop.left + dx));
+             newW = startPos.crop.width + (startPos.crop.left - proposedLeft);
+             newH = newW * imgAspect;
+             
+             // Bounds check height (bottom)
+             if (startPos.crop.top + newH > 100) {
+                 newH = 100 - startPos.crop.top;
+                 newW = newH / imgAspect;
+                 // Recalculate left based on constrained width
+                 proposedLeft = startPos.crop.left + startPos.crop.width - newW;
+             }
+             
+             next.left = proposedLeft;
+             next.width = newW;
+             next.height = newH;
+         }
+         else if (dragType === 'tr') {
+             // Dragging Top-Right: Modifies top and width(increase). Anchor Bottom-Left.
+             // Width driven
+             newW = Math.max(MIN_SIZE, Math.min(100 - startPos.crop.left, startPos.crop.width + dx));
+             newH = newW * imgAspect;
+             
+             // Check top bound
+             // top = startTop + startHeight - newHeight
+             let proposedTop = startPos.crop.top + startPos.crop.height - newH;
+             if (proposedTop < 0) {
+                 proposedTop = 0;
+                 newH = startPos.crop.top + startPos.crop.height; // Max avail height from bottom anchor
+                 newW = newH / imgAspect;
+             }
+             
+             next.top = proposedTop;
+             next.width = newW;
+             next.height = newH;
+         }
+         else if (dragType === 'tl') {
+             // Dragging Top-Left: Modifies top, left, width, height. Anchor Bottom-Right.
+             // Drive by dx (inverted)
+             let proposedLeft = Math.max(0, Math.min(startPos.crop.left + startPos.crop.width - MIN_SIZE, startPos.crop.left + dx));
+             newW = startPos.crop.width + (startPos.crop.left - proposedLeft);
+             newH = newW * imgAspect;
+             
+             let proposedTop = startPos.crop.top + startPos.crop.height - newH;
+             
+             // Check top bound
+             if (proposedTop < 0) {
+                 proposedTop = 0;
+                 newH = startPos.crop.top + startPos.crop.height;
+                 newW = newH / imgAspect;
+                 proposedLeft = startPos.crop.left + startPos.crop.width - newW;
+             }
+             
+             next.left = proposedLeft;
+             next.top = proposedTop;
+             next.width = newW;
+             next.height = newH;
+         }
       }
       return next;
     });
@@ -133,7 +232,7 @@ const ImageCropOverlay = ({ imageSrc, onSave, onCancel, element }) => {
     const offX = -(crop.left + (crop.width / 2) - 50) * scale;
     const offY = -(crop.top + (crop.height / 2) - 50) * scale;
 
-    onSave({ inset, scale, offX, offY });
+    onSave({ inset, scale, offX, offY, crop });
   }, [crop, onSave]);
 
   const currentPixelSize = {
@@ -159,8 +258,8 @@ const ImageCropOverlay = ({ imageSrc, onSave, onCancel, element }) => {
       <div className="w-full max-w-5xl flex items-center justify-between mb-8 text-white px-4">
         
         <div className="flex items-center gap-3 pl-250">
-          <button onClick={onCancel} className="px-6 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 transition-all font-bold text-sm border border-white/10">Cancel</button>
-          <button onClick={handleApply} className="px-6 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 transition-all font-bold text-sm border border-white/10">
+          <button onClick={onCancel} className="px-6 py-2.5 rounded-xl bg-white/50 hover:bg-white/10 transition-all font-bold text-white-sm border border-white/90">Cancel</button>
+          <button onClick={handleApply} className="px-6 py-2.5 rounded-xl bg-white/50 hover:bg-white/10 transition-all font-bold text-white-sm border border-white/90">
              Done
           </button>
         </div>
@@ -201,11 +300,7 @@ const ImageCropOverlay = ({ imageSrc, onSave, onCancel, element }) => {
               { id: 'tl', pos: '-top-2.5 -left-2.5 cursor-nwse-resize' },
               { id: 'tr', pos: '-top-2.5 -right-2.5 cursor-nesw-resize' },
               { id: 'bl', pos: '-bottom-2.5 -left-2.5 cursor-nesw-resize' },
-              { id: 'br', pos: '-bottom-2.5 -right-2.5 cursor-nwse-resize' },
-              { id: 't', pos: '-top-2.5 left-1/2 -translate-x-1/2 cursor-ns-resize' },
-              { id: 'b', pos: '-bottom-2.5 left-1/2 -translate-x-1/2 cursor-ns-resize' },
-              { id: 'l', pos: 'top-1/2 -left-2.5 -translate-y-1/2 cursor-ew-resize' },
-              { id: 'r', pos: 'top-1/2 -right-2.5 -translate-y-1/2 cursor-ew-resize' }
+              { id: 'br', pos: '-bottom-2.5 -right-2.5 cursor-nwse-resize' }
             ].map(h => (
               <div 
                 key={h.id} 
@@ -217,6 +312,111 @@ const ImageCropOverlay = ({ imageSrc, onSave, onCancel, element }) => {
         </div>
       </div>
     </div>
+  );
+};
+
+const RadiusBox = ({ corner, value, onChange, radiusStyle }) => {
+  const [isDragging, setIsDragging] = useState(false);
+  const startXRef = useRef(0);
+  const startValRef = useRef(0);
+
+  useEffect(() => {
+    if (!isDragging) return;
+    const handleMove = (e) => {
+      const dx = e.clientX - startXRef.current;
+      const newVal = Math.max(0, startValRef.current + Math.round(dx));
+      onChange(corner, newVal);
+    };
+    const handleUp = () => { setIsDragging(false); document.body.style.cursor = ''; };
+    window.addEventListener('mousemove', handleMove);
+    window.addEventListener('mouseup', handleUp);
+    document.body.style.cursor = 'ew-resize';
+    return () => { window.removeEventListener('mousemove', handleMove); window.removeEventListener('mouseup', handleUp); document.body.style.cursor = ''; };
+  }, [isDragging, onChange, corner]);
+
+  const onMouseDown = (e) => {
+    e.preventDefault(); setIsDragging(true);
+    startXRef.current = e.clientX; startValRef.current = Number(value) || 0;
+  };
+
+  return (
+    <div className={`relative flex items-center bg-white border border-gray-200 ${radiusStyle} w-24 h-12 shadow-sm px-2`}>
+        <div className="flex items-center justify-between w-full">
+            <button onClick={() => onChange(corner, value - 1)} className="text-gray-300 hover:text-indigo-500 transition-colors p-1"><ChevronLeft size={14} strokeWidth={1.5} /></button>
+            <div onMouseDown={onMouseDown} className="flex-1 h-full flex items-center justify-center cursor-ew-resize">
+              <span className="text-[13px] font-bold text-gray-800 select-none block w-full text-center">{value}</span>
+            </div>
+            <button onClick={() => onChange(corner, value + 1)} className="text-gray-300 hover:text-indigo-500 transition-colors p-1"><ChevronRight size={14} strokeWidth={1.5} /></button>
+        </div>
+    </div>
+  );
+};
+
+const EffectControlRow = ({ label, value, onChange, min = -100, max = 100 }) => {
+  const [isDragging, setIsDragging] = useState(false);
+  const startXRef = useRef(0);
+  const startValRef = useRef(0);
+
+  useEffect(() => {
+    if (!isDragging) return;
+    const handleMove = (e) => {
+      const dx = e.clientX - startXRef.current;
+      const newVal = Math.max(min, Math.min(max, startValRef.current + Math.round(dx)));
+      onChange(newVal);
+    };
+    const handleUp = () => { setIsDragging(false); document.body.style.cursor = ''; };
+    window.addEventListener('mousemove', handleMove);
+    window.addEventListener('mouseup', handleUp);
+    document.body.style.cursor = 'ew-resize';
+    return () => { window.removeEventListener('mousemove', handleMove); window.removeEventListener('mouseup', handleUp); document.body.style.cursor = ''; };
+  }, [isDragging, onChange, min, max]);
+
+  const onMouseDown = (e) => {
+    e.preventDefault(); setIsDragging(true);
+    startXRef.current = e.clientX; startValRef.current = Number(value);
+  };
+
+  return (
+    <div className="flex items-center gap-2">
+      <span className="text-xs text-gray-800 w-12 cursor-ew-resize select-none" onMouseDown={onMouseDown}>{label} :</span>
+      <div className="flex items-center gap-1">
+        <button onClick={() => onChange(Math.max(min, value - 1))} className="w-4 h-8 flex items-center justify-center text-gray-500 hover:text-gray-600 transition-colors"><ChevronLeft size={18} strokeWidth={2} /></button>
+        <div onMouseDown={onMouseDown} className="w-15 h-8 flex items-center justify-center border border-gray-500 rounded-sm text-[14px] text-gray-800 bg-white cursor-ew-resize select-none">
+           {value}
+        </div>
+        <button onClick={() => onChange(Math.min(max, value + 1))} className="w-4 h-8 flex items-center justify-center text-gray-500 hover:text-gray-600 transition-colors"><ChevronRight size={18} strokeWidth={2} /></button>
+      </div>
+    </div>
+  );
+};
+
+
+const DraggableSpan = ({ label, value, onChange, min = 0, max = 100, className }) => {
+  const [isDragging, setIsDragging] = useState(false);
+  const startXRef = useRef(0);
+  const startValRef = useRef(0);
+
+  useEffect(() => {
+    if (!isDragging) return;
+    const handleMove = (e) => {
+      const dx = e.clientX - startXRef.current;
+      const newVal = Math.max(min, Math.min(max, startValRef.current + Math.round(dx)));
+      onChange(newVal);
+    };
+    const handleUp = () => { setIsDragging(false); document.body.style.cursor = ''; };
+    window.addEventListener('mousemove', handleMove);
+    window.addEventListener('mouseup', handleUp);
+    document.body.style.cursor = 'ew-resize';
+    return () => { window.removeEventListener('mousemove', handleMove); window.removeEventListener('mouseup', handleUp); document.body.style.cursor = ''; };
+  }, [isDragging, onChange, min, max]);
+
+  const onMouseDown = (e) => {
+    e.preventDefault(); setIsDragging(true);
+    startXRef.current = e.clientX; startValRef.current = Number(value);
+  };
+
+  return (
+    <span className={`${className} cursor-ew-resize select-none`} onMouseDown={onMouseDown}>{label}</span>
   );
 };
 
@@ -233,9 +433,6 @@ const ImageEditor = ({ selectedElement, onUpdate, onPopupPreviewUpdate }) => {
   const [openSubSection, setOpenSubSection] = useState(null);
   const [isRadiusLinked, setIsRadiusLinked] = useState(false);
   const [showGallery, setShowGallery] = useState(false);
-  const [activeTab, setActiveTab] = useState('gallery');
-  const [galleryView, setGalleryView] = useState('template');
-  const [tempSelectedImage, setTempSelectedImage] = useState(null);
   const [previewSrc, setPreviewSrc] = useState(selectedElement?.src);
   const [imageType, setImageType] = useState('Fit');
   const [opacity, setOpacity] = useState(100);
@@ -251,14 +448,34 @@ const ImageEditor = ({ selectedElement, onUpdate, onPopupPreviewUpdate }) => {
     'Background Blur': { blur: 10, spread: 0 }
   });
 
-  const galleryImages = [
-    { name: 'Sea Port 1', url: 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e' },
-    { name: 'Sea Port 2', url: 'https://images.unsplash.com/photo-1519046904884-53103b34b206' },
-    { name: 'Sea Port 3', url: 'https://images.unsplash.com/photo-1473116763249-2faaef81ccda' },
-    { name: 'Cutting Machine', url: 'https://images.unsplash.com/photo-1581091226825-a6a2a5aee158' },
-    { name: 'AI', url: 'https://plus.unsplash.com/premium_photo-1764695426527-8f344be39993?q=80&w=1932&auto=format&fit=crop&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D' },
-    { name: 'Operator', url: 'https://images.unsplash.com/photo-1581092160562-40aa08e78837' }
-  ];
+  const [isSlideshow, setIsSlideshow] = useState(false);
+  const [showTransitionDropdown, setShowTransitionDropdown] = useState(false);
+  const [openContextMenu, setOpenContextMenu] = useState(null);
+  
+  // Ref to prevent persistence for one cycle during hydration
+  const shouldSkipPersistence = useRef(false);
+
+  // Hydrate Slideshow State from DOM
+  useEffect(() => {
+    if (selectedElement) {
+      if (selectedElement.dataset.slideshow || selectedElement.hasAttribute('data-is-slideshow')) {
+        setIsSlideshow(true);
+      } else {
+        setIsSlideshow(false);
+      }
+    }
+  }, [selectedElement]);
+
+
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (openContextMenu !== null && !e.target.closest('.context-menu-container')) {
+        setOpenContextMenu(null);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [openContextMenu]);
 
   const [uploadedImages, setUploadedImages] = useState([]);
 
@@ -271,7 +488,6 @@ const ImageEditor = ({ selectedElement, onUpdate, onPopupPreviewUpdate }) => {
     const file = e.target.files[0];
     if (!file) return;
     if (!file.type.startsWith('image/')) {
-      alert('Please select a valid image file (JPG, PNG, WebP, etc.)');
       e.target.value = '';
       return;
     }
@@ -280,23 +496,30 @@ const ImageEditor = ({ selectedElement, onUpdate, onPopupPreviewUpdate }) => {
     setUploadedImages((prev) => [newImageData, ...prev]);
     if (selectedElement) {
       selectedElement.src = imageUrl;
-      if (onUpdate) onUpdate();
+      setPreviewSrc(imageUrl);
+      selectedElement.removeAttribute('data-original-src');
+      selectedElement.removeAttribute('data-cropped-src');
+      if (onUpdate) onUpdate({ shouldRefresh: true });
     }
     e.target.value = '';
   };
 
   const handleFileUpload = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    
+    const file = files[0];
     if (!file.type.startsWith('image/')) {
-      alert('Please select a valid image file (JPG, PNG, WebP, etc.)');
       e.target.value = '';
       return;
     }
     const imageUrl = URL.createObjectURL(file);
     if (selectedElement) {
       selectedElement.src = imageUrl;
-      if (onUpdate) onUpdate();
+      setPreviewSrc(imageUrl);
+      selectedElement.removeAttribute('data-original-src');
+      selectedElement.removeAttribute('data-cropped-src');
+      if (onUpdate) onUpdate({ shouldRefresh: true });
     }
     e.target.value = '';
   };
@@ -324,8 +547,9 @@ const ImageEditor = ({ selectedElement, onUpdate, onPopupPreviewUpdate }) => {
     const cp = selectedElement.style.clipPath || selectedElement.style.webkitClipPath || '';
     const fitMapRev = { 'contain': 'Fit', 'cover': 'Fill', 'fill': 'Stretch' };
     const currentFit = inlineFit || window.getComputedStyle(selectedElement).objectFit || 'fill';
-    const hasCrop = cp.includes('inset');
-    const newType = hasCrop ? 'Crop' : (fitMapRev[currentFit] || 'Stretch');
+    const isCroppedSrc = selectedElement.getAttribute('data-cropped-src') === selectedElement.getAttribute('src');
+    const hasCrop = cp.includes('inset') || isCroppedSrc;
+    const newType = (isCroppedSrc || hasCrop) ? 'Crop' : (fitMapRev[currentFit] || 'Stretch');
     
     // Only call setState if the DOM actually changed from what we think it is
     if (newType !== currentState.imageType) {
@@ -379,16 +603,12 @@ const ImageEditor = ({ selectedElement, onUpdate, onPopupPreviewUpdate }) => {
   }, [selectedElement, syncStateFromDOM]);
 
   const applyVisuals = useCallback(() => {
-    if (!selectedElement) return;
+    if (!selectedElement || !selectedElement.isConnected) return;
 
     // Fix: Prevent applying stale state immediately when switching elements
     if (selectedElement !== lastAppliedElementRef.current) {
         lastAppliedElementRef.current = selectedElement;
-        return;
-    }
-
-    // Fix: Block apply if stateRef shows we have a pending update (prevents flash of default Fit)
-    if (stateRef.current && (stateRef.current.imageType !== imageType || stateRef.current.opacity !== opacity)) {
+        isUpdatingDOM.current = false;
         return;
     }
 
@@ -436,10 +656,28 @@ const ImageEditor = ({ selectedElement, onUpdate, onPopupPreviewUpdate }) => {
         const objectFit = fitMap[imageType] || 'fill';
         selectedElement.style.setProperty('object-fit', objectFit, 'important');
         
-        // Removed forced width/height setting to prevent resizing bugs. 
-        // We trust the existing element dimensions.
+        // Manage Source Restoration: Restore original if not in crop mode, otherwise use cropped
+        const originalSrc = selectedElement.getAttribute('data-original-src');
+        const croppedSrc = selectedElement.getAttribute('data-cropped-src');
 
-        if (imageType !== 'Crop') {
+        if (imageType === 'Crop' && croppedSrc) {
+            if (selectedElement.getAttribute('src') !== croppedSrc) {
+                selectedElement.src = croppedSrc;
+                selectedElement.setAttribute('src', croppedSrc);
+                setPreviewSrc(croppedSrc);
+            }
+        } else if (originalSrc) {
+            if (selectedElement.getAttribute('src') !== originalSrc) {
+                selectedElement.src = originalSrc;
+                selectedElement.setAttribute('src', originalSrc);
+                setPreviewSrc(originalSrc);
+            }
+            
+            // Clean up CSS artifacts when not in Crop mode
+            selectedElement.style.removeProperty('clip-path');
+            selectedElement.style.removeProperty('-webkit-clip-path');
+            selectedElement.style.removeProperty('transform');
+        } else if (imageType !== 'Crop') {
             selectedElement.style.removeProperty('clip-path');
             selectedElement.style.removeProperty('-webkit-clip-path');
             selectedElement.style.removeProperty('transform');
@@ -477,6 +715,20 @@ const ImageEditor = ({ selectedElement, onUpdate, onPopupPreviewUpdate }) => {
                     overlay.style.borderRadius = selectedElement.style.borderRadius;
                 }
             } else if (overlay) overlay.remove();
+
+            // Deck Effect for Slideshow handles via separate module or effect
+            if (isSlideshow && selectedElement.parentElement) {
+                // Keep minimal styles for slideshow visual consistency in editor if needed
+                selectedElement.style.setProperty('border', '4px solid white', 'important');
+                selectedElement.style.setProperty('box-shadow', '0 8px 25px rgba(0,0,0,0.12)', 'important');
+                selectedElement.style.setProperty('z-index', '1', 'important');
+            } else {
+                selectedElement.style.removeProperty('border');
+                selectedElement.style.removeProperty('z-index');
+                if (!activeEffects.includes('Drop Shadow')) {
+                    selectedElement.style.removeProperty('box-shadow');
+                }
+            }
         }
         if (activeEffects.includes('Drop Shadow') || activeEffects.includes('Blur')) {
             if (selectedElement.parentElement) selectedElement.parentElement.style.setProperty('overflow', 'visible', 'important');
@@ -486,7 +738,7 @@ const ImageEditor = ({ selectedElement, onUpdate, onPopupPreviewUpdate }) => {
         // Increase delay to ensure all browser style mutations are processed
         setTimeout(() => { isUpdatingDOM.current = false; }, 250);
     }
-  }, [selectedElement, filters, activeEffects, effectSettings, opacity, imageType, onUpdate]);
+  }, [selectedElement, filters, activeEffects, effectSettings, opacity, imageType, radius, onUpdate, isSlideshow]);
 
   useEffect(() => { applyVisuals(); }, [applyVisuals]);
 
@@ -513,26 +765,7 @@ const ImageEditor = ({ selectedElement, onUpdate, onPopupPreviewUpdate }) => {
     }
   };
 
-  const RadiusBox = ({ corner, value, radiusStyle }) => (
-    <div className={`relative flex items-center bg-white border border-gray-200 ${radiusStyle} w-24 h-12 shadow-sm px-2`}>
-      <div className="flex items-center justify-between w-full">
-        <button onClick={() => updateRadius(corner, value - 1)} className="text-gray-300 hover:text-indigo-500 transition-colors p-1"><ChevronLeft size={14} strokeWidth={1.5} /></button>
-        <input type="number" value={value} onChange={(e) => updateRadius(corner, e.target.value)} className="w-full text-center text-[13px] font-bold outline-none bg-transparent text-gray-800" />
-        <button onClick={() => updateRadius(corner, value + 1)} className="text-gray-300 hover:text-indigo-500 transition-colors p-1"><ChevronRight size={14} strokeWidth={1.5} /></button>
-      </div>
-    </div>
-  );
 
-  const EffectControlRow = ({ label, value, onChange, min = -100, max = 100 }) => (
-    <div className="flex items-center gap-2">
-      <span className="text-[14px] text-gray-800 font-normal w-[70px]">{label} :</span>
-      <div className="flex items-center gap-2">
-        <button onClick={() => onChange(Math.max(min, value - 1))} className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-gray-600 transition-colors"><ChevronLeft size={18} strokeWidth={2} /></button>
-        <input type="number" value={value} onChange={(e) => onChange(Math.max(min, Math.min(max, Number(e.target.value))))} className="w-[70px] h-8 text-center border border-gray-300 rounded-lg text-[14px] font-normal text-gray-800 outline-none focus:border-gray-400" />
-        <button onClick={() => onChange(Math.min(max, value + 1))} className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-gray-600 transition-colors"><ChevronRight size={18} strokeWidth={2} /></button>
-      </div>
-    </div>
-  );
 
   if (!selectedElement) return null;
 
@@ -546,26 +779,66 @@ const ImageEditor = ({ selectedElement, onUpdate, onPopupPreviewUpdate }) => {
         input[type='range']::-webkit-slider-thumb { -webkit-appearance: none; height: 14px; width: 14px; border-radius: 50%; background: #6366f1; border: 2px solid #ffffff; box-shadow: 0 1px 3px rgba(0,0,0,0.2); margin-top: -5px; cursor: pointer; }
       `}</style>
       <div className="bg-white border space-y-4 border-gray-200 rounded-lg shadow-sm overflow-hidden relative font-sans">
-        <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept="image/*" className="hidden" />
+        <input 
+          type="file" 
+          ref={fileInputRef} 
+          onChange={handleFileUpload} 
+          accept="image/*" 
+          multiple={isSlideshow} 
+          className="hidden" 
+        />
 
         <div className="flex items-center justify-between px-4 py-3 border-b border-gray-50 cursor-pointer hover:bg-gray-50 transition-colors" onClick={() => setActiveSection(activeSection === 'main' ? null : 'main')}>
-          <div className="flex items-center gap-2">
-            <Edit3 size={16} className="text-gray-600" />
-            <span className="font-medium text-gray-800 text-[15px]">Image</span>
+          <div className="flex items-center gap-2.5">
+            <Edit3 size={15} className="text-gray-800" />
+            <span className="font-medium text-gray-700 text-sm">Image</span>
           </div>
           <ChevronUp size={16} className={`text-gray-500 transition-transform duration-200 ${isMainPanelOpen ? '' : 'rotate-180'}`} />
         </div>
+        
 
         {isMainPanelOpen && (
-          <div className="space-y-5 pr-5 pl-5 mb-15 ">
+          <div className="space-y-5 pr-5 pl-5 mb-5">
             <div className="space-y-4">
               <div className="flex items-center gap-2">
                 <span className="text-sm font-bold text-gray-900 whitespace-nowrap">Upload your Image</span>
                 <div className="h-[2px] w-full bg-gray-200" />
               </div>
 
-              <div className="flex items-center justify-between relative z-20">
-                <span className="text-[12px] font-bold text-gray-700">Select the Image type :</span>
+              <div className="flex items-center justify-between py-1">
+                <span className="text-xs text-gray-700">Turn on Slideshow to add more images</span>
+                <button 
+                  onClick={() => setIsSlideshow(!isSlideshow)}
+                  className={`relative w-11 h-6 transition-colors duration-200 ease-in-out rounded-full focus:outline-none ${isSlideshow ? 'bg-indigo-600' : 'bg-gray-200'}`}
+                >
+                  <div className={`absolute left-0.5 top-0.5 bg-white w-5 h-5 rounded-full shadow transform transition-transform duration-200 ease-in-out ${isSlideshow ? 'translate-x-5' : 'translate-x-0'}`} />
+                </button>
+              </div>
+
+              {isSlideshow ? (
+                <div className="space-y-4 animate-in fade-in duration-300">
+                   <div className="flex items-center justify-between bg-indigo-50/30 p-3 rounded-xl border border-indigo-100/50">
+                     <div className="flex items-center gap-2">
+                        <div className="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center text-white shadow-sm">
+                           <ImageIcon size={18} />
+                        </div>
+                        <div>
+                          <p className="text-[12px] font-bold text-gray-900">Slideshow Mode Active</p>
+                          <p className="text-[10px] text-gray-500 font-medium">Use Properties to manage slides</p>
+                        </div>
+                     </div>
+                     <button 
+                       onClick={() => setIsSlideshow(false)}
+                       className="px-3 py-1.5 bg-white border border-gray-200 rounded-lg text-[11px] font-bold text-gray-700 hover:bg-gray-50 transition-colors shadow-sm"
+                     >
+                       Disable
+                     </button>
+                   </div>
+                </div>
+              ) : (
+                <div className="space-y-4 animate-in fade-in duration-300">
+                  <div className="flex items-center justify-between relative z-20">
+                    <span className="text-[12px] font-bold text-gray-700">Select the Image type :</span>
                 <div className="relative">
                   <button 
                     onClick={() => setShowImageTypeDropdown(!showImageTypeDropdown)} 
@@ -603,59 +876,127 @@ const ImageEditor = ({ selectedElement, onUpdate, onPopupPreviewUpdate }) => {
               </div>
 
               <div className="flex items-center gap-3">
-                <div className="w-18 h-18 rounded-xl overflow-hidden  border-2 border-dashed bg-gray-50 ">
+                <div 
+                  onClick={() => fileInputRef.current?.click()}
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    const files = e.dataTransfer.files;
+                    if (files && files.length > 0) {
+                      handleFileUpload({ target: { files: files } });
+                    }
+                  }}
+                  className="w-18 h-18 rounded-xl overflow-hidden border-2 border-dashed bg-gray-50 cursor-pointer hover:border-indigo-400 transition-colors"
+                >
                   <img src={previewSrc || selectedElement.src} className="w-full h-full object-cover" alt="preview" />
                 </div>
-                <Replace size={18} className="text-gray-300 shrink-0" />
-                <div onClick={() => fileInputRef.current?.click()} className="flex-1 h-18 border-2 border-dashed bg-gray-50 rounded-xl flex flex-col items-center justify-center cursor-pointer">
-                  <Upload size={18} className="text-500 mb-1" />
+                <button 
+                  onClick={() => fileInputRef.current?.click()}
+                  className="p-1 hover:bg-gray-100 rounded-lg transition-colors"
+                >
+                  <Replace size={18} className="text-gray-400 shrink-0" />
+                </button>
+                <div 
+                  onClick={() => fileInputRef.current?.click()} 
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    const files = e.dataTransfer.files;
+                    if (files && files.length > 0) {
+                      handleFileUpload({ target: { files: files } });
+                    }
+                  }}
+                  className="flex-1 h-18 border-2 border-dashed bg-gray-50 rounded-xl flex flex-col items-center justify-center cursor-pointer hover:border-indigo-400 hover:bg-gray-50 transition-all"
+                >
+                  <Upload size={18} className="text-gray-500 mb-1" />
                   <p className="text-[10px] text-gray-400 font-medium text-center">Drag & Drop or <span className="font-bold text-indigo-600">Upload</span></p>
                 </div>
               </div>
 
-              <div onClick={() => { setShowGallery(true); setGalleryView('template'); }} className="relative h-40 rounded-xl overflow-hidden cursor-pointer group border border-gray-200 select-none">
-                <div className="absolute inset-0 bg-gradient-to-br from-gray-300 via-gray-400 to-gray-500 p-4">
-                  <div className="flex items-end justify-center gap-3 h-full pb-10 opacity-70 grayscale group-hover:grayscale-0 transition-all duration-300 transform group-hover:scale-105">
-                    {galleryImages.slice(0, 3).map((img, i) => (
-                      <div key={i} className={`rounded-lg shadow-lg overflow-hidden bg-white border-2 border-gray-300 ${i === 1 ? 'w-24 h-24 -mb-2 z-10' : 'w-20 h-20'}`}>
-                        <img src={img.url} alt="Gallery" className="w-full h-full object-cover" />
-                      </div>
-                    ))}
-                  </div>
                 </div>
-                <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/30 to-transparent flex items-end justify-center pb-5">
-                  <div className="flex items-center gap-2 text-white font-bold text-sm tracking-wide"><ImageIcon size={20} />Image Gallery</div>
-                </div>
-              </div>
+              )}
             </div>
 
             <div className="space-y-3">
               <div className="flex items-center gap-2">
-                <span className="text-sm font-bold text-gray-800">Opacity</span>
+                <DraggableSpan label="Opacity" value={opacity} onChange={setOpacity} className="text-sm font-bold text-gray-900 whitespace-nowrap" />
                 <div className="h-[2px] w-full bg-gray-200" />
               </div>
               <div className="flex items-center gap-3 px-1">
-                <input type="range" min="0" max="100" value={opacity} onChange={(e) => setOpacity(Number(e.target.value))} className="w-full h-1 rounded- appearance-none cursor-pointer" style={{ background: `linear-gradient(to right, #6366f1 0%, #6366f1 ${opacity}%, #f3f4f6 ${opacity}%, #f3f4f6 100%)` }} />
-                <span className="text-[11px] font-bold text-gray-700 w-10 text-right">{opacity}%</span>
+                <div className="flex-1 space-y-2">
+                  <input type="range" min="0" max="100" value={opacity} onChange={(e) => setOpacity(Number(e.target.value))} className="w-full h-1 rounded- appearance-none cursor-pointer" style={{ background: `linear-gradient(to right, #6366f1 0%, #6366f1 ${opacity}%, #f3f4f6 ${opacity}%, #f3f4f6 100%)` }} />
+                </div>
+                <span className="text-xs font-bold text-gray-700 w-10 text-right self-end mb-1">{opacity}%</span>
               </div>
             </div>
 
+            {!isSlideshow && (
+               <div onClick={() => setShowGallery(true)} className="relative h-40 rounded-xl overflow-hidden cursor-pointer group border border-gray-200 select-none shadow-sm shadow-indigo-100/20 mb-4">
+                 <div className="absolute inset-0 bg-gradient-to-br from-gray-300 via-gray-400 to-gray-500 p-4">
+                    <div className="flex items-end justify-center gap-3 h-full pb-10 opacity-90 grayscale group-hover:grayscale-0 transition-all duration-200 transform group-hover:scale-105">
+                      {[
+                        'https://images.unsplash.com/photo-1507525428034-b723cf961d3e',
+                        'https://images.unsplash.com/photo-1519046904884-53103b34b206',
+                        'https://images.unsplash.com/photo-1473116763249-2faaef81ccda'
+                      ].map((url, i) => (
+                        <div key={i} className={`rounded-lg shadow-lg overflow-hidden bg-white border-2 border-gray-300 ${i === 1 ? 'w-24 h-24 -mb-2 z-10' : 'w-20 h-20'}`}>
+                          <img src={url} alt="Gallery" className="w-full h-full object-cover" />
+                        </div>
+                      ))}
+                    </div>
+                 </div>
+                 <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/30 to-transparent flex items-end justify-center pb-5">
+                   <div className="flex items-center gap-2 text-white font-bold text-sm tracking-wide">
+                     <ImageIcon size={20} />
+                     Image Gallery
+                   </div>
+                 </div>
+               </div>
+             )}
+
             <div className="space-y-3">
+
+              {isSlideshow && (
+                <SlideshowProperties 
+                  selectedElement={selectedElement}
+                  isOpen={openSubSection === 'slideshow'} 
+                  onToggle={() => setOpenSubSection(openSubSection === 'slideshow' ? null : 'slideshow')}
+                  onUpdate={onUpdate}
+                  opacity={opacity}
+                  setPreviewSrc={setPreviewSrc}
+                />
+              )}
+
+              
               <div className="border border-gray-100 rounded-xl overflow-hidden shadow-sm bg-white">
                 <button onClick={() => setOpenSubSection(openSubSection === 'adjustments' ? null : 'adjustments')} className="w-full flex items-center justify-between px-4 py-3.5 text-[13px] font-bold text-gray-800">
                   <span>Adjustments</span>
                   <ChevronDown size={16} className={`text-gray-400 transition-transform duration-200 ${openSubSection === 'adjustments' ? 'rotate-180' : ''}`} />
                 </button>
                 {openSubSection === 'adjustments' && (
-                  <div className="px-5 pb-5 space-y-5 animate-in slide-in-from-top-2">
+                  <div className="relative px-6 pb-5 pt-5 border-t border-gray-100">
+                  <div className="px-1 pb-2 space-y-2  text-xs animate-in slide-in-from-top-2">
                     {[
                       ['Exposure', 'exposure', -100, 100], ['Contrast', 'contrast', -100, 100], ['Saturation', 'saturation', -100, 100], ['Temperature', 'temperature', -100, 100], ['Tint', 'tint', -180, 180], ['Highlights', 'highlights', -100, 100], ['Shadows', 'shadows', -100, 100],
                     ].map(([label, key, min, max]) => (
-                      <div key={key} className="space-y-2">
-                        <div className="flex justify-between items-center"><span className="text-[10px] font-bold text-gray-500 uppercase tracking-tight">{label}</span><span className="text-[11px] font-bold text-gray-900">{filters[key]}</span></div>
+                      <div key={key} className="space-y-1">
+                        <div className="flex justify-between items-center">
+                          <div className="flex items-center gap-2">
+                            <DraggableSpan label={label} value={filters[key]} onChange={(v) => setFilters((f) => ({ ...f, [key]: v }))} min={min} max={max} className="text-[13px] font-medium text-gray-700" />
+                            <button 
+                              onClick={() => setFilters((f) => ({ ...f, [key]: 0 }))} 
+                              className="text-gray-400 hover:text-indigo-600 transition-colors"
+                              title={`Reset ${label}`}
+                            >
+                              <RotateCcw size={12} />
+                            </button>
+                          </div>
+                          <span className="text-xs font-bold text-gray-900">{filters[key]}</span>
+                        </div>
                         <input type="range" min={min} max={max} value={filters[key]} onChange={(e) => setFilters((f) => ({ ...f, [key]: +e.target.value }))} style={{ background: `linear-gradient(to right, #6366f1 0%, #6366f1 ${((filters[key] - min) / (max - min)) * 100}%, #f3f4f6 ${((filters[key] - min) / (max - min)) * 100}%, #f3f4f6 100%)` }} />
                       </div>
                     ))}
+                  </div>
                   </div>
                 )}
               </div>
@@ -666,18 +1007,18 @@ const ImageEditor = ({ selectedElement, onUpdate, onPopupPreviewUpdate }) => {
                   <ChevronDown size={16} className={`text-gray-400 transition-transform duration-200 ${openSubSection === 'radius' ? 'rotate-180' : ''}`} />
                 </button>
                 {openSubSection === 'radius' && (
-                  <div className="relative px-6 pb-5 border-t border-gray-50">
+                  <div className="relative px-6 pb-5 pt-5 border-t border-gray-100">
                     <div className="flex flex-col items-center gap-6">
                       <div className="flex items-center gap-6">
-                        <RadiusBox corner="tl" value={radius.tl} radiusStyle="rounded-tl-[18px] rounded-tr-md rounded-br-md rounded-bl-md" />
-                        <RadiusBox corner="tr" value={radius.tr} radiusStyle="rounded-tr-[18px] rounded-tl-md rounded-br-md rounded-bl-md" />
+                        <RadiusBox onChange={updateRadius} corner="tl" value={radius.tl} radiusStyle="rounded-tl-3xl rounded-tr-md rounded-br-md rounded-bl-md" />
+                        <RadiusBox onChange={updateRadius} corner="tr" value={radius.tr} radiusStyle="rounded-tr-3xl rounded-tl-md rounded-br-md rounded-bl-md" />
                       </div>
-                      <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-10 pointer-events-none">
+                      <div className="absolute left-1/2 top-20 -translate-x-1/2 -translate-y-1/2 z-10 pointer-events-none">
                         <button onClick={() => setIsRadiusLinked(!isRadiusLinked)} className="pointer-events-auto p-1.5 transition-colors bg-white rounded-full">{isRadiusLinked ? <LinkIcon size={20} className="text-gray-900" /> : <Link2Off size={20} className="text-gray-400" />}</button>
                       </div>
                       <div className="flex items-center gap-6">
-                        <RadiusBox corner="bl" value={radius.bl} radiusStyle="rounded-bl-[18px] rounded-tr-md rounded-br-md rounded-tl-md" />
-                        <RadiusBox corner="br" value={radius.br} radiusStyle="rounded-br-[18px] rounded-tr-md rounded-tl-md rounded-bl-md" />
+                        <RadiusBox onChange={updateRadius} corner="bl" value={radius.bl} radiusStyle="rounded-bl-3xl rounded-tr-md rounded-br-md rounded-tl-md" />
+                        <RadiusBox onChange={updateRadius} corner="br" value={radius.br} radiusStyle="rounded-br-3xl rounded-tr-md rounded-tl-md rounded-bl-md" />
                       </div>
                     </div>
                   </div>
@@ -690,32 +1031,72 @@ const ImageEditor = ({ selectedElement, onUpdate, onPopupPreviewUpdate }) => {
                   <ChevronDown size={16} className={`text-gray-400 transition-transform duration-200 ${openSubSection === 'effect' ? 'rotate-180' : ''}`} />
                 </button>
                 {openSubSection === 'effect' && (
-                  <div className="p-4 pt-0 space-y-2 bg-white border-t border-gray-50">
+                  <div className="relative px-6 pb-5 pt-5 border-t border-gray-100">
+                  <div className="p-0 pt-0 space-y-2  bg-white border-t border-gray-50">
                     {['Drop Shadow', 'Inner Shadow', 'Blur', 'Background Blur'].map((eff) => (
                       <div key={eff} className="relative">
-                        <div className={`flex items-center justify-between p-3.5 rounded-xl border transition-all ${activePopup === eff ? 'border-indigo-500 bg-indigo-50/20' : 'bg-gray-50/80 border-gray-100'}`}>
-                          <span className="text-[12px] font-bold text-gray-700 cursor-pointer flex-1" onClick={() => { if (activeEffects.includes(eff)) setActivePopup(activePopup === eff ? null : eff); }}>{eff}</span>
-                          <button onClick={() => {
+                        <div 
+                          onClick={() => {
                             const isActive = activeEffects.includes(eff);
-                            if (isActive) { setActiveEffects(prev => prev.filter(e => e !== eff)); if (activePopup === eff) setActivePopup(null); }
-                            else { setActiveEffects(prev => [...prev, eff]); setActivePopup(eff); }
-                          }}>{activeEffects.includes(eff) ? <Trash2 size={16} className="text-red-500" /> : <Plus size={16} className="text-gray-400" />}</button>
+                            if (!isActive) {
+                              setActiveEffects(prev => [...prev, eff]);
+                              setActivePopup(eff);
+                            } else {
+                              setActivePopup(activePopup === eff ? null : eff);
+                            }
+                          }}
+                          className={`flex items-center justify-between p-2 rounded-lg border transition-all cursor-pointer ${activePopup === eff ? 'border-black-800 bg-indigo-50/20' : 'bg-gray-50/80 border-gray-100 hover:border-gray-300'}`}
+                        >
+                          <span className="text-xs font-bold text-gray-700 flex-1">{eff}</span>
+                          <button 
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              const isActive = activeEffects.includes(eff);
+                              if (isActive) { 
+                                setActiveEffects(prev => prev.filter(e => e !== eff)); 
+                                if (activePopup === eff) setActivePopup(null); 
+                              } else { 
+                                setActiveEffects(prev => [...prev, eff]); 
+                                setActivePopup(eff); 
+                              }
+                            }}
+                            className="p-1 hover:bg-white/50 rounded-lg transition-colors"
+                          >
+                            {activeEffects.includes(eff) ? <Trash2 size={16} className="text-red-500" /> : <Plus size={16} className="text-gray-400" />}
+                          </button>
                         </div>
                         {activePopup === eff && (
-                          <div className="fixed z-[9999] bg-white rounded-3xl shadow-2xl border border-gray-100 p-6 animate-in slide-in-from-right-4 fade-in duration-200" style={{ width: '350px', top: '35%', left: '90%', transform: 'translateX(-120%)' }}>
-                            <div className="flex items-center mb-4"><span className="text-sm font-extrabold text-gray-800">{eff}</span><div className="h-[1px] flex-1 mx-3 bg-gray-100" /><button onClick={() => setActivePopup(null)} className="p-1.5 rounded-lg hover:bg-gray-100 transition" aria-label="Close"><X size={16} className="text-gray-500" /></button></div>
-                            <div className="space-y-5">
+                          <div className="fixed z-[50] bg-white rounded-lg shadow-2xl border border-gray-100 p-6 animate-in slide-in-from-right-4 fade-in duration-200" style={{ width: '300px', top: '35%', left: '92%', transform: 'translateX(-120%)' }}>
+                            <div className="flex items-center mb-4">
+                              <span className="text-sm font-bold text-gray-800">{eff}</span>
+                              <div className="h-[1px] flex-1 mx-3 bg-gray-100" />
+                              <button onClick={() => setActivePopup(null)} className="p-1.5 rounded-lg hover:bg-gray-100 transition" aria-label="Close"><X size={16} className="text-gray-500" /></button></div>
+                            <div className="space-y-3">
                               {eff.includes('Shadow') && (
-                                <><div className="flex items-start gap-3"><div className="relative"><div className="w-[75px] h-[75px] rounded-lg flex items-center justify-center text-white text-sm font-semibold cursor-pointer overflow-hidden" style={{ background: `linear-gradient(to right, ${effectSettings[eff].color} 0%, ${effectSettings[eff].color}88 50%, transparent 100%)` }}><span className="relative z-10">{effectSettings[eff].opacity} %</span><input type="color" value={effectSettings[eff].color} onChange={(e) => updateEffectSetting(eff, 'color', e.target.value)} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" /></div></div><div className="flex-1 space-y-3"><div className="flex items-center gap-2"><span className="text-[14px] text-gray-800 font-normal whitespace-nowrap">Code :</span><div className="flex-1 relative"><input type="text" value={effectSettings[eff].color} onChange={(e) => updateEffectSetting(eff, 'color', e.target.value)} className="w-full text-[14px] text-gray-800 outline-none bg-transparent border border-gray-300 rounded-lg px-3 pr-8 h-9" /><div className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 cursor-pointer"><Pencil size={16} className="text-gray-400" strokeWidth={2} />{'EyeDropper' in window ? <button onClick={() => handleColorPick(eff)} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" /> : <input type="color" value={effectSettings[eff].color} onChange={(e) => updateEffectSetting(eff, 'color', e.target.value)} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />}</div></div></div><div className="flex items-center gap-2"><span className="text-[14px] text-gray-800 font-normal whitespace-nowrap">Opacity :</span><div className="flex-1 flex items-center gap-2"><input type="range" min="0" max="100" value={effectSettings[eff].opacity} onChange={(e) => updateEffectSetting(eff, 'opacity', Number(e.target.value))} className="flex-1 w-1 h-1.5 appearance-none cursor-pointer" style={{ background: `linear-gradient(to right, #6366f1 0%, #6366f1 ${effectSettings[eff].opacity}%, #e5e7eb ${effectSettings[eff].opacity}%, #e5e7eb 100%)` }} /><span className="text-[14px] text-gray-600 font-normal w-9 text-right">{effectSettings[eff].opacity} %</span></div></div></div></div><div className="space-y-3 pt-2"><EffectControlRow label="X Axis" value={effectSettings[eff].x} onChange={(v) => updateEffectSetting(eff, 'x', v)} min={-100} max={100} /><EffectControlRow label="Y Axis" value={effectSettings[eff].y} onChange={(v) => updateEffectSetting(eff, 'y', v)} min={-100} max={100} /><EffectControlRow label="Blur %" value={effectSettings[eff].blur} onChange={(v) => updateEffectSetting(eff, 'blur', v)} min={0} max={100} /><EffectControlRow label="Spread" value={effectSettings[eff].spread} onChange={(v) => updateEffectSetting(eff, 'spread', v)} min={0} max={100} /></div></>
+                                <><div className="flex items-start gap-2"><div className="relative"><div className="w-[65px] h-[65px] rounded-sm flex items-center justify-center text-white text-sm font-semibold cursor-pointer overflow-hidden" style={{ background: `linear-gradient(to right, ${effectSettings[eff].color} 0%, ${effectSettings[eff].color}88 50%, transparent 100%)` }}><span className="relative z-10">{effectSettings[eff].opacity} %</span><input type="color" value={effectSettings[eff].color} onChange={(e) => updateEffectSetting(eff, 'color', e.target.value)} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" /></div></div><div className="flex-1 space-y-3"><div className="flex items-center gap-2"><span className="text-xs text-gray-800 font-normal whitespace-nowrap">Code :</span><div className="flex-1 relative"><input type="text" value={effectSettings[eff].color} onChange={(e) => updateEffectSetting(eff, 'color', e.target.value)} className="w-full text-[14px] text-gray-800 outline-none bg-transparent border border-gray-300 rounded-lg px-3 pr-8 h-9" />
+                                <div className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 cursor-pointer"><Pencil size={16} className="text-gray-400" strokeWidth={2} />{'EyeDropper' in window ? <button onClick={() => handleColorPick(eff)} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" /> : <input type="color" value={effectSettings[eff].color} onChange={(e) => updateEffectSetting(eff, 'color', e.target.value)} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />}</div></div></div>
+                                <div className="flex items-center gap-2">
+                                  <DraggableSpan label="Opacity :" value={effectSettings[eff].opacity} onChange={(v) => updateEffectSetting(eff, 'opacity', v)} className="text-xs text-gray-800 font-normal whitespace-nowrap" />
+                                  <div className="flex-1 flex items-center gap-2">
+                                  <input type="range" min="0" max="100" value={effectSettings[eff].opacity} onChange={(e) => updateEffectSetting(eff, 'opacity', Number(e.target.value))} className="flex-1 w-1 h-1 appearance-none cursor-pointer" style={{ background: `linear-gradient(to right, #6366f1 0%, #6366f1 ${effectSettings[eff].opacity}%, #e5e7eb ${effectSettings[eff].opacity}%, #e5e7eb 100%)` }} />
+                                  <span className="text-xs text-gray-800">{effectSettings[eff].opacity} %</span></div></div></div></div>
+                                  
+                                  <div className="space-y-3 pt-2"><EffectControlRow label="X Axis" value={effectSettings[eff].x} onChange={(v) => updateEffectSetting(eff, 'x', v)} min={-100} max={100} />
+                                    <EffectControlRow label="Y Axis" value={effectSettings[eff].y} onChange={(v) => updateEffectSetting(eff, 'y', v)} min={-100} max={100} />
+                                      <EffectControlRow label="Blur %" value={effectSettings[eff].blur} onChange={(v) => updateEffectSetting(eff, 'blur', v)} min={0} max={100} />
+                                        <EffectControlRow label="Spread" value={effectSettings[eff].spread} onChange={(v) => updateEffectSetting(eff, 'spread', v)} min={0} max={100} /></div></>
                               )}
                               {!eff.includes('Shadow') && (
-                                <div className="space-y-3"><EffectControlRow label="Blur %" value={effectSettings[eff].blur} onChange={(v) => updateEffectSetting(eff, 'blur', v)} min={0} max={100} /><EffectControlRow label="Spread" value={effectSettings[eff].spread} onChange={(v) => updateEffectSetting(eff, 'spread', v)} min={0} max={100} /></div>
+                                <div className="space-y-3">
+                                  <EffectControlRow label="Blur %" value={effectSettings[eff].blur} onChange={(v) => updateEffectSetting(eff, 'blur', v)} min={0} max={100} />
+                                <EffectControlRow label="Spread" value={effectSettings[eff].spread} onChange={(v) => updateEffectSetting(eff, 'spread', v)} min={0} max={100} /></div>
                               )}
                             </div>
                           </div>
                         )}
                       </div>
                     ))}
+                  </div>
                   </div>
                 )}
               </div>
@@ -730,35 +1111,110 @@ const ImageEditor = ({ selectedElement, onUpdate, onPopupPreviewUpdate }) => {
 
 
       {showGallery && (
-        <div className="fixed z-[10000] bg-white border border-gray-100 rounded-[12px] shadow-2xl flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200" style={{ width: '320px', height: '540px', top: '55%', left: '80%', transform: 'translate(-50%, -50%)' }}>
+          <div className="fixed z-[1000] bg-white border border-gray-100 rounded-[12px] shadow-2xl flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200" style={{ width: '320px', height: '540px', top: '55%', left: '80%', transform: 'translate(-50%, -50%)' }}>
           <div className="flex items-center justify-between px-4 py-4 border-b border-gray-100"><h2 className="text-mg font-bold text-gray-900">Image Gallery</h2><button onClick={() => setShowGallery(false)} className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-100 transition-colors"><X size={18} className="text-gray-400" /></button></div>
-          <div className=" px-4 py-2"><h3 className="text-[13px] font-bold text-gray-900 mb-1">Upload your Image</h3><p className="text-[11px] text-gray-400 mb-4"><span>You Can Reuse The File Which Is Uploaded In Gallery</span><span className="text-red-500">*</span></p><div onClick={() => galleryInputRef.current?.click()} className="w-72 h-28 border-2 border-dashed border-gray-300 rounded-xl flex flex-col items-center justify-center bg-white hover:bg-gray-50 transition-all cursor-pointer group mb-2"><p className="text-[13px] text-gray-500 font-normal mb-3">Drag & Drop or <span className="text-blue-600 font-semibold">Upload</span></p><Upload size={28} className="text-gray-300 mb-2" strokeWidth={1.5} /><p className="text-[11px] text-gray-400 text-center">Supported File : <span className="font-medium">JPG, PNG</span></p></div><input type="file" ref={galleryInputRef} onChange={handleModalFileUpload} accept="image/*" className="hidden" /></div>
-          <div className="mb-20 px-4 py-2"><h3 className="text-[13px] font-bold text-gray-900 mb-1">Uploaded Images</h3>{uploadedImages.length > 0 ? (
-            <div className="grid grid-cols-3 gap-x-6 gap-y-8">{uploadedImages.map((img, index) => (
-              <div key={img.id || index} className="group cursor-pointer flex flex-col items-center" onClick={() => setTempSelectedImage(img)}><div className={`aspect-square w-full rounded-[8px] overflow-hidden border-2 transition-all shadow-sm ${tempSelectedImage?.name === img.name ? 'border-indigo-600 ring-2 ring-indigo-100' : 'border-transparent'}`}><img src={img.url} alt={img.name} className="w-full h-full object-cover" /></div><p className="text-[12px] text-gray-400 mt-2 font-medium text-center leading-tight w-full truncate px-1">{img.name}</p></div>
+          <div className=" px-4 py-2"><h3 className="text-[13px] font-bold text-gray-900 mb-1">Upload your Image</h3><p className="text-[11px] text-gray-400 mb-4"><span>You Can Reuse The File Which Is Uploaded In Gallery</span><span className="text-red-500">*</span></p><div 
+            onClick={() => galleryInputRef.current?.click()} 
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => {
+              e.preventDefault();
+              const file = e.dataTransfer.files[0];
+              if (file && file.type.startsWith('image/')) {
+                handleModalFileUpload({ target: { files: [file] } });
+              }
+            }}
+            className="w-full h-28 border-2 border-dashed border-gray-300 rounded-xl flex flex-col items-center justify-center bg-white hover:bg-gray-50 transition-all cursor-pointer group mb-2"
+          ><p className="text-[13px] text-gray-500 font-normal mb-3">Drag & Drop or <span className="text-blue-600 font-semibold">Upload</span></p><Upload size={28} className="text-gray-300 mb-2" strokeWidth={1.5} /><p className="text-[11px] text-gray-400 text-center">Supported File : <span className="font-medium">JPG, PNG</span></p></div><input type="file" ref={galleryInputRef} onChange={handleModalFileUpload} accept="image/*" className="hidden" /></div>
+          <div className="custom-scrollbar overflow-y-auto max-h-[250px] px-4 py-2 flex-1"><h3 className="text-[13px] font-bold text-gray-900 mb-1">Uploaded Images</h3>{uploadedImages.length > 0 ? (
+            <div className="grid grid-cols-3 gap-3">{uploadedImages.map((img, index) => (
+              <div key={img.id || index} className="group cursor-pointer flex flex-col items-center" onClick={() => {
+                if (selectedElement) {
+                  selectedElement.src = img.url;
+                  setPreviewSrc(img.url);
+                  selectedElement.removeAttribute('data-original-src');
+                  selectedElement.removeAttribute('data-cropped-src');
+                  if (onUpdate) onUpdate({ shouldRefresh: true });
+                }
+              }}>
+                <div className={`aspect-square w-full rounded-lg overflow-hidden border-2 transition-all hover:border-indigo-400 border-gray-100`}><img src={img.url} className="w-full h-full object-cover" alt="" /></div>
+              </div>
             ))}</div>
           ) : (
-            <div className="text-center py-8 text-gray-400"><p className="text-sm">No uploaded images yet</p><p className="text-xs mt-1">Upload an image to get started</p></div>
+            <div className="text-center py-8 text-gray-400"><p className="text-sm">No uploaded images yet</p></div>
           )}</div>
-          <div className="p-3 border-t flex justify-end gap-2 bg-white"><button onClick={() => setShowGallery(false)} className="flex-1 h-8 border border-gray-300 rounded-lg text-[11px] font-semibold flex items-center justify-center gap-1 hover:bg-gray-50"><X size={12} /> Close</button><button disabled={!tempSelectedImage} onClick={() => { if (!tempSelectedImage) return; selectedElement.src = tempSelectedImage.url; if (onUpdate) onUpdate(); setShowGallery(false); }} className="flex-1 h-8 bg-black text-white rounded-lg text-[11px] font-semibold flex items-center justify-center gap-1 hover:bg-zinc-800 disabled:opacity-50"><Replace size={12} /> Replace</button></div>
+          <div className="p-3 border-t flex justify-end gap-2 bg-white mt-auto"><button onClick={() => setShowGallery(false)} className="flex-1 h-8 border border-gray-300 rounded-lg text-[11px] font-semibold flex items-center justify-center gap-1 hover:bg-gray-50"><X size={12} /> Close</button><button onClick={() => setShowGallery(false)} className="flex-1 h-8 bg-black text-white rounded-lg text-[11px] font-semibold flex items-center justify-center gap-1 hover:bg-zinc-800"><Check size={12} /> Done</button></div>
         </div>
-      )}
-
-      {isCropping && (
+      )}      {isCropping && (
         <ImageCropOverlay 
-            imageSrc={previewSrc || selectedElement.src}
+            imageSrc={selectedElement.getAttribute('data-original-src') || previewSrc || selectedElement.src}
             element={selectedElement}
-            onSave={({ inset, scale, offX, offY }) => {
-                selectedElement.style.setProperty('clip-path', inset, 'important');
-                selectedElement.style.setProperty('-webkit-clip-path', inset, 'important');
-                
-                // Advanced Zoom: Make the cropped area fill the selected image box
-                const transform = `scale(${scale.toFixed(3)}) translate(${offX.toFixed(2)}%, ${offY.toFixed(2)}%)`;
-                selectedElement.style.setProperty('transform', transform, 'important');
-                selectedElement.style.setProperty('transform-origin', 'center', 'important');
-
-                setIsCropping(false);
-                if (onUpdate) onUpdate();
+            onSave={({ inset, scale, offX, offY, crop }) => {
+                const img = new Image();
+                img.crossOrigin = "anonymous";
+                img.onload = () => {
+                    try {
+                        const canvas = document.createElement('canvas');
+                        const ctx = canvas.getContext('2d');
+                        
+                        const sw = (crop.width / 100) * img.naturalWidth;
+                        const sh = (crop.height / 100) * img.naturalHeight;
+                        const sx = (crop.left / 100) * img.naturalWidth;
+                        const sy = (crop.top / 100) * img.naturalHeight;
+                        
+                        canvas.width = sw;
+                        canvas.height = sh;
+                        ctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
+                        
+                        const croppedSrc = canvas.toDataURL('image/png');
+                        
+                        // Temporarily block MutationObserver to prevent sync feedback loops
+                        isUpdatingDOM.current = true;
+                        
+                        // 1. Backup original source if not already backed up
+                        const currentSrc = selectedElement.getAttribute('src');
+                        const alreadyStoredOriginal = selectedElement.getAttribute('data-original-src');
+                        if (!alreadyStoredOriginal || alreadyStoredOriginal === croppedSrc) {
+                            // If we don't have a backup, or if the backup is currently the same as the crop (bug prevention),
+                            // use the current previewSrc or existing src as the original.
+                            selectedElement.setAttribute('data-original-src', previewSrc || currentSrc);
+                        }
+                        
+                        // 2. Definitively replace the source in the template and store backup
+                        selectedElement.src = croppedSrc;
+                        selectedElement.setAttribute('src', croppedSrc);
+                        selectedElement.setAttribute('data-cropped-src', croppedSrc);
+                        if (selectedElement.dataset) selectedElement.dataset.src = croppedSrc;
+                        
+                        // 3. Clear all CSS cropping artifacts
+                        selectedElement.style.removeProperty('clip-path');
+                        selectedElement.style.removeProperty('-webkit-clip-path');
+                        selectedElement.style.removeProperty('transform');
+                        selectedElement.style.setProperty('object-fit', 'cover', 'important');
+                        
+                        // 4. Sync React state
+                        setPreviewSrc(croppedSrc);
+                        setImageType('Crop');
+                        stateRef.current.previewSrc = croppedSrc;
+                        stateRef.current.imageType = 'Crop';
+                        
+                        // 5. Update parent and close
+                        setIsCropping(false);
+                        if (onUpdate) onUpdate({ shouldRefresh: true });
+                        
+                        // 5. Release block after DOM and State have settled
+                        setTimeout(() => { isUpdatingDOM.current = false; }, 300);
+                        
+                    } catch (err) {
+                        console.error("Critical Crop Error:", err);
+                        setIsCropping(false);
+                        isUpdatingDOM.current = false;
+                    }
+                };
+                img.onerror = () => {
+                    setIsCropping(false);
+                    isUpdatingDOM.current = false;
+                };
+                img.src = previewSrc || selectedElement.src;
             }}
             onCancel={() => setIsCropping(false)}
         />

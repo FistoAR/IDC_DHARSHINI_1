@@ -126,6 +126,7 @@ const MainEditor = () => {
   // Element selection state
   const [selectedElement, setSelectedElement] = useState(null);
   const [selectedElementType, setSelectedElementType] = useState(null);
+  const [selectedElementPage, setSelectedElementPage] = useState(null);
 
   // Page renaming state (for auto-rename after add/duplicate)
   const [editingPageId, setEditingPageId] = useState(null);
@@ -942,21 +943,43 @@ const MainEditor = () => {
   }, [pages, currentPage, showAlert, closeAlert]);
 
   // ==================== TEMPLATE EDITING ====================
-  const handleTemplateChange = useCallback((newHTML) => {
-    setTemplateHTML(newHTML);
+  const handleTemplateChange = useCallback((newHTML, targetIdx = currentPage) => {
+    if (targetIdx === currentPage) {
+        setTemplateHTML(newHTML);
+    }
+    
     setPages(prev => {
       const updated = [...prev];
-      updated[currentPage] = { ...updated[currentPage], html: newHTML };
+      if (updated[targetIdx]) {
+          updated[targetIdx] = { ...updated[targetIdx], html: newHTML };
+      }
       return updated;
     });
-    // Reduced debounce for faster typing feedback (800ms)
-    generateThumbnail(newHTML, pages[currentPage].id, 800);
+
+    if (pages[targetIdx]) {
+        generateThumbnail(newHTML, pages[targetIdx].id, 800);
+    }
   }, [currentPage, generateThumbnail, pages]);
 
-  const handleElementSelect = useCallback((element, type) => {
+  const handleElementSelect = useCallback((element, type, pageIndex) => {
+    // Remove tag from old selection
+    if (selectedElement && selectedElement.ownerDocument) {
+      try {
+        selectedElement.removeAttribute('data-selection-active');
+      } catch (e) {}
+    }
+
     setSelectedElement(element);
     setSelectedElementType(type);
-  }, []);
+    setSelectedElementPage(pageIndex);
+
+    // Tag new selection
+    if (element) {
+      try {
+        element.setAttribute('data-selection-active', 'true');
+      } catch (e) {}
+    }
+  }, [selectedElement]);
 
   // Debounce ref for element updates
   const elementUpdateDebounceRef = useRef(null);
@@ -965,57 +988,64 @@ const MainEditor = () => {
     const targetElement = options?.newElement || selectedElement;
     
     if (targetElement) {
-      // Use the element's ownerDocument to ensure we get the correct page's HTML
       const doc = targetElement.ownerDocument;
       
       if (doc && doc.documentElement) {
         const html = doc.documentElement.outerHTML;
         
-        // Prevent re-render of iframe by syncing internal ref first
-        if (!options?.shouldRefresh && htmlEditorRef.current) {
-            htmlEditorRef.current.setInternalHTML(html);
+        // Determine the correct page index for this element
+        let targetPageIndex = selectedElementPage;
+        
+        // Fallback: Check if we can find page index from the iframe title
+        if (targetPageIndex === null || targetPageIndex === undefined) {
+            const iframes = document.querySelectorAll('iframe');
+            const owningIframe = Array.from(iframes).find(iframe => iframe.contentDocument === doc);
+            if (owningIframe && owningIframe.title) {
+                const match = owningIframe.title.match(/Page (\d+)/);
+                if (match) targetPageIndex = parseInt(match[1]) - 1;
+            }
         }
 
-        // If it's a structural refresh (like icon replacement), update immediately
+        // If still not found, use currentPage
+        if (targetPageIndex === null || targetPageIndex === undefined) {
+            targetPageIndex = currentPage;
+        }
+        
+        // Prevent re-render of iframe by syncing internal ref first
+        if (!options?.shouldRefresh && htmlEditorRef.current) {
+            htmlEditorRef.current.setInternalHTML(html, targetPageIndex);
+        }
+
         if (options?.shouldRefresh) {
             if (elementUpdateDebounceRef.current) clearTimeout(elementUpdateDebounceRef.current);
-            handleTemplateChange(html);
+            handleTemplateChange(html, targetPageIndex);
             
-            // If a new element was created (icon replacement), re-select it after refresh
+            // Re-select logic...
             if (options?.newElement) {
-                // Wait for iframe to refresh and event listeners to be reattached
                 setTimeout(() => {
-                    const iframe = document.querySelector('iframe[title="Template Editor"]');
+                    const iframe = Array.from(document.querySelectorAll('iframe[title="Template Editor"], iframe[title^="Page"]'))
+                        .find(f => f.contentDocument && f.contentDocument.contains(options.newElement));
                     if (iframe && iframe.contentDocument) {
                         const doc = iframe.contentDocument;
-                        // Find the new element in the refreshed iframe
-                        // Use data-editable and position/attributes to locate it
                         const svgs = doc.querySelectorAll('svg[data-editable="true"]');
-                        // Find matching SVG by comparing key attributes
                         const newElementInIframe = Array.from(svgs).find(svg => {
-                            // Match by similar attributes (width, height, position)
                             return svg.getAttribute('width') === options.newElement.getAttribute('width') &&
                                    svg.getAttribute('height') === options.newElement.getAttribute('height');
-                        }) || svgs[0]; // Fallback to first SVG if no exact match
-                        
-                        if (newElementInIframe) {
-                            // Trigger selection
-                            newElementInIframe.click();
-                        }
+                        }) || svgs[0];
+                        if (newElementInIframe) newElementInIframe.click();
                     }
-                }, 150); // Wait for setupEditableElements to complete
+                }, 150);
             }
             return;
         }
         
-        // Otherwise, debounce the heavy state update (Sidebar re-render)
         if (elementUpdateDebounceRef.current) clearTimeout(elementUpdateDebounceRef.current);
         elementUpdateDebounceRef.current = setTimeout(() => {
-            handleTemplateChange(html);
+            handleTemplateChange(html, targetPageIndex);
         }, 500);
       }
     }
-  }, [selectedElement, handleTemplateChange]);
+  }, [selectedElement, selectedElementPage, currentPage, handleTemplateChange]);
 
   const openPreview = useCallback(() => {
     setPages(pages.map((page, idx) => idx === currentPage ? { ...page, html: templateHTML } : page));
