@@ -11,6 +11,7 @@ import Editor from './Modules/Editer';
 import { MainEditor } from './components/TemplateEditor'; // Import MainEditor
 import ThreedEditor from './components/ThreedEditor/ThreedEditor';
 import { ToastProvider } from './components/CustomToast';
+import CustomizedEditor from './components/CustomizedEditor/CustomizedEditor';
 
 function App() {
   return (
@@ -21,10 +22,14 @@ function App() {
           <Route path="/" element={<Signin />} />
           <Route path="/signup" element={<Signup />} />
           
-          {/* Editor Layout */}
           <Route path="/editor" element={<Editor />}>
             <Route index element={<MainEditor />} />
             <Route path="threed_editor" element={<ThreedEditor />} />
+          </Route>
+
+          {/* Customized Editor Layout */}
+          <Route path="/customized" element={<Editor />}>
+            <Route index element={<CustomizedEditor />} />
           </Route>
 
           {/* Routes WITH navbar */}
