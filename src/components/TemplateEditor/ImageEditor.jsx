@@ -426,6 +426,12 @@ const ImageEditor = ({ selectedElement, onUpdate, onPopupPreviewUpdate }) => {
   const stateRef = useRef({ imageType: 'Fit', opacity: 100, radius: { tl: 12, tr: 12, br: 12, bl: 12 }, previewSrc: selectedElement?.src });
   const isUpdatingDOM = useRef(false);
   const lastAppliedElementRef = useRef(null);
+  const onUpdateRef = useRef(onUpdate);
+
+  // Sync the ref on every render
+  useEffect(() => {
+    onUpdateRef.current = onUpdate;
+  });
 
   const [activeSection, setActiveSection] = useState('main');
   const isMainPanelOpen = activeSection === 'main';
@@ -478,6 +484,7 @@ const ImageEditor = ({ selectedElement, onUpdate, onPopupPreviewUpdate }) => {
   }, [openContextMenu]);
 
   const [uploadedImages, setUploadedImages] = useState([]);
+  const [localGallerySelected, setLocalGallerySelected] = useState(null);
 
   useEffect(() => {
     if (!stateRef.current) stateRef.current = {};
@@ -532,8 +539,10 @@ const ImageEditor = ({ selectedElement, onUpdate, onPopupPreviewUpdate }) => {
     // 1. Sync Opacity
     const domOpacity = selectedElement.style.opacity || '1';
     const newOpacity = Math.round(parseFloat(domOpacity) * 100);
-    // Tolerance check to prevent infinite re-render loops due to float precision
-    if (Math.abs(newOpacity - currentState.opacity) > 1) setOpacity(newOpacity);
+    if (Math.abs(newOpacity - currentState.opacity) > 1) {
+        currentState.opacity = newOpacity; // Update ref immediately
+        setOpacity(newOpacity);
+    }
 
     // 2. Sync Radius
     const domRadius = selectedElement.style.borderRadius || '0px';
@@ -559,6 +568,7 @@ const ImageEditor = ({ selectedElement, onUpdate, onPopupPreviewUpdate }) => {
 
     // 4. Sync Src
     if (selectedElement.src !== currentState.previewSrc) {
+        currentState.previewSrc = selectedElement.src; // Update ref immediately
         setPreviewSrc(selectedElement.src);
     }
 
@@ -591,7 +601,7 @@ const ImageEditor = ({ selectedElement, onUpdate, onPopupPreviewUpdate }) => {
     if (!selectedElement) return;
     const observer = new MutationObserver((mutations) => {
         if (isUpdatingDOM.current) return;
-        const relevantMutation = mutations.some(m => m.type === 'attributes' && (m.attributeName === 'src' || m.attributeName === 'style'));
+        const relevantMutation = mutations.some(m => m.type === 'attributes' && (m.attributeName === 'src' || m.attributeName === 'style' || m.attributeName === 'data-slideshow'));
         if (relevantMutation) syncStateFromDOM();
     });
     observer.observe(selectedElement, { attributes: true, attributeFilter: ['style', 'src'] });
@@ -604,6 +614,9 @@ const ImageEditor = ({ selectedElement, onUpdate, onPopupPreviewUpdate }) => {
 
   const applyVisuals = useCallback(() => {
     if (!selectedElement || !selectedElement.isConnected) return;
+
+    // Guard: Prevent re-applying visuals while an external mutation (like slideshow transition) is in progress
+    if (isUpdatingDOM.current) return;
 
     // Fix: Prevent applying stale state immediately when switching elements
     if (selectedElement !== lastAppliedElementRef.current) {
@@ -716,13 +729,61 @@ const ImageEditor = ({ selectedElement, onUpdate, onPopupPreviewUpdate }) => {
                 }
             } else if (overlay) overlay.remove();
 
-            // Deck Effect for Slideshow handles via separate module or effect
+            // Deck Effect for Slideshow
             if (isSlideshow && selectedElement.parentElement) {
-                // Keep minimal styles for slideshow visual consistency in editor if needed
+                let stack1 = selectedElement.parentElement.querySelector('.slideshow-stack-1');
+                let stack2 = selectedElement.parentElement.querySelector('.slideshow-stack-2');
+
+                if (!stack1) {
+                    stack1 = document.createElement('div');
+                    stack1.className = 'slideshow-stack-1';
+                    stack1.style.position = 'absolute';
+                    stack1.style.top = '0';
+                    stack1.style.left = '0';
+                    stack1.style.width = '100%';
+                    stack1.style.height = '100%';
+                    stack1.style.zIndex = '-1';
+                    stack1.style.backgroundColor = 'white';
+                    stack1.style.border = '1px solid rgba(0,0,0,0.05)';
+                    stack1.style.boxShadow = '0 4px 12px rgba(0,0,0,0.08)';
+                    selectedElement.parentElement.insertBefore(stack1, selectedElement);
+                }
+                
+                if (!stack2) {
+                    stack2 = document.createElement('div');
+                    stack2.className = 'slideshow-stack-2';
+                    stack2.style.position = 'absolute';
+                    stack2.style.top = '0';
+                    stack2.style.left = '0';
+                    stack2.style.width = '100%';
+                    stack2.style.height = '100%';
+                    stack2.style.zIndex = '-2';
+                    stack2.style.backgroundColor = 'white';
+                    stack2.style.border = '1px solid rgba(0,0,0,0.05)';
+                    stack2.style.boxShadow = '0 4px 12px rgba(0,0,0,0.08)';
+                    selectedElement.parentElement.insertBefore(stack2, selectedElement);
+                }
+
+                const commonRadius = selectedElement.style.borderRadius || '12px';
+                stack1.style.borderRadius = commonRadius;
+                stack1.style.transform = 'translate(6px, 6px) rotate(1.5deg)';
+                stack1.style.display = 'block';
+
+                stack2.style.borderRadius = commonRadius;
+                stack2.style.transform = 'translate(12px, 12px) rotate(3deg)';
+                stack2.style.display = 'block';
+
                 selectedElement.style.setProperty('border', '4px solid white', 'important');
                 selectedElement.style.setProperty('box-shadow', '0 8px 25px rgba(0,0,0,0.12)', 'important');
                 selectedElement.style.setProperty('z-index', '1', 'important');
+
+                if (window.getComputedStyle(selectedElement.parentElement).position === 'static') {
+                    selectedElement.parentElement.style.position = 'relative';
+                }
+                selectedElement.parentElement.style.setProperty('overflow', 'visible', 'important');
             } else {
+                selectedElement.parentElement?.querySelector('.slideshow-stack-1')?.remove();
+                selectedElement.parentElement?.querySelector('.slideshow-stack-2')?.remove();
                 selectedElement.style.removeProperty('border');
                 selectedElement.style.removeProperty('z-index');
                 if (!activeEffects.includes('Drop Shadow')) {
@@ -735,10 +796,9 @@ const ImageEditor = ({ selectedElement, onUpdate, onPopupPreviewUpdate }) => {
         }
         if (onUpdate) onUpdate();
     } finally {
-        // Increase delay to ensure all browser style mutations are processed
         setTimeout(() => { isUpdatingDOM.current = false; }, 250);
     }
-  }, [selectedElement, filters, activeEffects, effectSettings, opacity, imageType, radius, onUpdate, isSlideshow]);
+  }, [selectedElement, filters, activeEffects, effectSettings, opacity, imageType, radius, isSlideshow]);
 
   useEffect(() => { applyVisuals(); }, [applyVisuals]);
 
@@ -817,23 +877,6 @@ const ImageEditor = ({ selectedElement, onUpdate, onPopupPreviewUpdate }) => {
 
               {isSlideshow ? (
                 <div className="space-y-4 animate-in fade-in duration-300">
-                   <div className="flex items-center justify-between bg-indigo-50/30 p-3 rounded-xl border border-indigo-100/50">
-                     <div className="flex items-center gap-2">
-                        <div className="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center text-white shadow-sm">
-                           <ImageIcon size={18} />
-                        </div>
-                        <div>
-                          <p className="text-[12px] font-bold text-gray-900">Slideshow Mode Active</p>
-                          <p className="text-[10px] text-gray-500 font-medium">Use Properties to manage slides</p>
-                        </div>
-                     </div>
-                     <button 
-                       onClick={() => setIsSlideshow(false)}
-                       className="px-3 py-1.5 bg-white border border-gray-200 rounded-lg text-[11px] font-bold text-gray-700 hover:bg-gray-50 transition-colors shadow-sm"
-                     >
-                       Disable
-                     </button>
-                   </div>
                 </div>
               ) : (
                 <div className="space-y-4 animate-in fade-in duration-300">
@@ -917,18 +960,20 @@ const ImageEditor = ({ selectedElement, onUpdate, onPopupPreviewUpdate }) => {
               )}
             </div>
 
-            <div className="space-y-3">
-              <div className="flex items-center gap-2">
-                <DraggableSpan label="Opacity" value={opacity} onChange={setOpacity} className="text-sm font-bold text-gray-900 whitespace-nowrap" />
-                <div className="h-[2px] w-full bg-gray-200" />
-              </div>
-              <div className="flex items-center gap-3 px-1">
-                <div className="flex-1 space-y-2">
-                  <input type="range" min="0" max="100" value={opacity} onChange={(e) => setOpacity(Number(e.target.value))} className="w-full h-1 rounded- appearance-none cursor-pointer" style={{ background: `linear-gradient(to right, #6366f1 0%, #6366f1 ${opacity}%, #f3f4f6 ${opacity}%, #f3f4f6 100%)` }} />
+            {!isSlideshow && (
+              <div className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <DraggableSpan label="Opacity" value={opacity} onChange={setOpacity} className="text-sm font-bold text-gray-900 whitespace-nowrap" />
+                  <div className="h-[2px] w-full bg-gray-200" />
                 </div>
-                <span className="text-xs font-bold text-gray-700 w-10 text-right self-end mb-1">{opacity}%</span>
+                <div className="flex items-center gap-3 px-1">
+                  <div className="flex-1 space-y-2">
+                    <input type="range" min="0" max="100" value={opacity} onChange={(e) => setOpacity(Number(e.target.value))} className="w-full h-1 rounded- appearance-none cursor-pointer" style={{ background: `linear-gradient(to right, #6366f1 0%, #6366f1 ${opacity}%, #f3f4f6 ${opacity}%, #f3f4f6 100%)` }} />
+                  </div>
+                  <span className="text-xs font-bold text-gray-700 w-10 text-right self-end mb-1">{opacity}%</span>
+                </div>
               </div>
-            </div>
+            )}
 
             {!isSlideshow && (
                <div onClick={() => setShowGallery(true)} className="relative h-40 rounded-xl overflow-hidden cursor-pointer group border border-gray-200 select-none shadow-sm shadow-indigo-100/20 mb-4">
@@ -963,7 +1008,9 @@ const ImageEditor = ({ selectedElement, onUpdate, onPopupPreviewUpdate }) => {
                   onToggle={() => setOpenSubSection(openSubSection === 'slideshow' ? null : 'slideshow')}
                   onUpdate={onUpdate}
                   opacity={opacity}
+                  onUpdateOpacity={(v) => setOpacity(v)}
                   setPreviewSrc={setPreviewSrc}
+                  setIsUpdatingDOM={(val) => { isUpdatingDOM.current = val; }}
                 />
               )}
 
@@ -1127,22 +1174,33 @@ const ImageEditor = ({ selectedElement, onUpdate, onPopupPreviewUpdate }) => {
           ><p className="text-[13px] text-gray-500 font-normal mb-3">Drag & Drop or <span className="text-blue-600 font-semibold">Upload</span></p><Upload size={28} className="text-gray-300 mb-2" strokeWidth={1.5} /><p className="text-[11px] text-gray-400 text-center">Supported File : <span className="font-medium">JPG, PNG</span></p></div><input type="file" ref={galleryInputRef} onChange={handleModalFileUpload} accept="image/*" className="hidden" /></div>
           <div className="custom-scrollbar overflow-y-auto max-h-[250px] px-4 py-2 flex-1"><h3 className="text-[13px] font-bold text-gray-900 mb-1">Uploaded Images</h3>{uploadedImages.length > 0 ? (
             <div className="grid grid-cols-3 gap-3">{uploadedImages.map((img, index) => (
-              <div key={img.id || index} className="group cursor-pointer flex flex-col items-center" onClick={() => {
-                if (selectedElement) {
-                  selectedElement.src = img.url;
-                  setPreviewSrc(img.url);
-                  selectedElement.removeAttribute('data-original-src');
-                  selectedElement.removeAttribute('data-cropped-src');
-                  if (onUpdate) onUpdate({ shouldRefresh: true });
-                }
-              }}>
-                <div className={`aspect-square w-full rounded-lg overflow-hidden border-2 transition-all hover:border-indigo-400 border-gray-100`}><img src={img.url} className="w-full h-full object-cover" alt="" /></div>
+              <div key={img.id || index} className="group cursor-pointer flex flex-col items-center" onClick={() => setLocalGallerySelected(img)}>
+                <div className={`aspect-square w-full rounded-lg overflow-hidden border-2 transition-all ${localGallerySelected?.url === img.url ? 'border-indigo-600 shadow-md scale-[1.02]' : 'hover:border-indigo-400 border-gray-100'}`}><img src={img.url} className="w-full h-full object-cover" alt="" /></div>
               </div>
             ))}</div>
           ) : (
             <div className="text-center py-8 text-gray-400"><p className="text-sm">No uploaded images yet</p></div>
           )}</div>
-          <div className="p-3 border-t flex justify-end gap-2 bg-white mt-auto"><button onClick={() => setShowGallery(false)} className="flex-1 h-8 border border-gray-300 rounded-lg text-[11px] font-semibold flex items-center justify-center gap-1 hover:bg-gray-50"><X size={12} /> Close</button><button onClick={() => setShowGallery(false)} className="flex-1 h-8 bg-black text-white rounded-lg text-[11px] font-semibold flex items-center justify-center gap-1 hover:bg-zinc-800"><Check size={12} /> Done</button></div>
+          <div className="p-3 border-t flex justify-end gap-2 bg-white mt-auto">
+            <button onClick={() => { setShowGallery(false); setLocalGallerySelected(null); }} className="flex-1 h-8 border border-gray-300 rounded-lg text-[11px] font-semibold flex items-center justify-center gap-1 hover:bg-gray-50"><X size={12} /> Close</button>
+            <button 
+              onClick={() => { 
+                if (localGallerySelected && selectedElement) {
+                  selectedElement.src = localGallerySelected.url;
+                  setPreviewSrc(localGallerySelected.url);
+                  selectedElement.removeAttribute('data-original-src');
+                  selectedElement.removeAttribute('data-cropped-src');
+                  if (onUpdate) onUpdate({ shouldRefresh: true });
+                  setShowGallery(false);
+                  setLocalGallerySelected(null);
+                }
+              }} 
+              disabled={!localGallerySelected}
+              className={`flex-1 h-8 rounded-lg text-[11px] font-semibold flex items-center justify-center gap-1 transition-all ${localGallerySelected ? 'bg-black text-white hover:bg-zinc-800' : 'bg-gray-100 text-gray-400 cursor-not-allowed'}`}
+            >
+              <Check size={12} /> Replace
+            </button>
+          </div>
         </div>
       )}      {isCropping && (
         <ImageCropOverlay 
@@ -1214,7 +1272,7 @@ const ImageEditor = ({ selectedElement, onUpdate, onPopupPreviewUpdate }) => {
                     setIsCropping(false);
                     isUpdatingDOM.current = false;
                 };
-                img.src = previewSrc || selectedElement.src;
+                img.src = selectedElement.getAttribute('data-original-src') || previewSrc || selectedElement.src;
             }}
             onCancel={() => setIsCropping(false)}
         />

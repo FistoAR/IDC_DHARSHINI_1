@@ -83,7 +83,7 @@ const GifEditor = ({ selectedElement, onUpdate, onPopupPreviewUpdate }) => {
 
     if (selectedElement?.tagName === "IMG") {
       if (selectedElement.src?.startsWith("blob:")) {
-        URL.revokeObjectURL(selectedElement.src);
+        // URL.revokeObjectURL(selectedElement.src); // Disabled to prevent ERR_FILE_NOT_FOUND in thumbnails
       }
 
       selectedElement.src = url;
