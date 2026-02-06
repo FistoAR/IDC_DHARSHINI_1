@@ -63,7 +63,7 @@ const Sidebar = ({ bookName, pageCount, activePanel, onSelectPanel, onUpdateBook
   };
 
   return (
-    <div className="w-50 bg-white shadow-lg flex flex-col z-10 h-full overflow-y-auto border-r border-gray-200 shrink-0">
+    <div className="w-60 bg-white shadow-lg flex flex-col z-10 h-full overflow-y-auto border-xs border-gray-200 shrink-0">
       <div className="flex flex-col">
         {/* Title Section */}
         <div className="px-5 pt-5 pb-3 border-b border-gray-200">
